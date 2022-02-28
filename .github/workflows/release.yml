@@ -10,13 +10,31 @@ name: Production
 
 jobs:
   centos:
-    name: Build - CentOS / RHEL
+    strategy:
+      matrix:
+        platform:
+          - x86_64
+          - aarch64
+    name: Build - CentOS / RHEL (${{ matrix.platform }})
     runs-on: ubuntu-latest
     steps:
       - name: Check out code
         uses: actions/checkout@v2
-      - name: Set up docker image
+      - name: Set up QEMU for docker build
+        if: matrix.platform == 'aarch64'
+        uses: docker/setup-qemu-action@v1
+        with:
+          platforms: linux/arm64
+      - name: Set up QEMU for docker run
+        if: matrix.platform == 'aarch64'
+        run: sudo apt-get install qemu binfmt-support qemu-user-static
+      - name: Set up docker image for x86_64
+        if: matrix.platform == 'x86_64'
         run: docker build -t volta .
+        working-directory: ./ci/docker
+      - name: Set up docker image for aarch64
+        if: matrix.platform == 'aarch64'
+        run: docker build --platform=linux/arm64 -t volta .
         working-directory: ./ci/docker
       - name: Compile and package Volta
         run: docker run --volume ${PWD}:/root/workspace --workdir /root/workspace --rm --init --tty volta /root/workspace/ci/build-and-package.sh volta-centos
@@ -28,7 +46,7 @@ jobs:
         uses: actions/upload-artifact@v2
         with:
           name: linux-centos
-          path: target/release/volta-centos.tar.gz
+          path: target/release/volta-centos-${{ matrix.platform }}.tar.gz
 
   linux:
     strategy:
@@ -36,7 +54,10 @@ jobs:
         openssl:
           - 1_1_0
           - 1_0_1
-    name: Build - OpenSSL ${{ matrix.openssl }}
+        platform:
+          - x86_64
+          - aarch64
+    name: Build - OpenSSL ${{ matrix.openssl }} (${{ matrix.platform }})
     runs-on: ubuntu-latest
     steps:
       - name: Check out code
@@ -47,8 +68,21 @@ jobs:
           repository: openssl/openssl
           ref: OpenSSL_${{ matrix.openssl }}-stable
           path: openssl
-      - name: Set up docker image
+      - name: Set up QEMU for docker build
+        if: matrix.platform == 'aarch64'
+        uses: docker/setup-qemu-action@v1
+        with:
+          platforms: linux/arm64
+      - name: Set up QEMU for docker run
+        if: matrix.platform == 'aarch64'
+        run: sudo apt-get install qemu binfmt-support qemu-user-static
+      - name: Set up docker image for x86_64
+        if: matrix.platform == 'x86_64'
         run: docker build -t volta .
+        working-directory: ./ci/docker
+      - name: Set up docker image for aarch64
+        if: matrix.platform == 'aarch64'
+        run: docker build --platform=linux/arm64 -t volta .
         working-directory: ./ci/docker
       - name: Compile and package OpenSSL & Volta
         run: docker run --volume ${PWD}:/root/workspace --workdir /root/workspace --rm --init --tty volta /root/workspace/ci/build-with-openssl.sh volta-openssl-${{ matrix.openssl }}
@@ -60,7 +94,7 @@ jobs:
         uses: actions/upload-artifact@v2
         with:
           name: linux-openssl-${{ matrix.openssl }}
-          path: target/release/volta-openssl-${{ matrix.openssl }}.tar.gz
+          path: target/release/volta-openssl-${{ matrix.openssl }}-${{ matrix.platform }}.tar.gz
 
   macos:
     name: Build - MacOS
