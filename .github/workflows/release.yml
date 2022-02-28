@@ -10,14 +10,30 @@ name: Production
 
 jobs:
   centos:
-    name: Build - CentOS / RHEL
+    strategy:
+      matrix:
+        platform:
+          - x86_64
+          - aarch64
+    name: Build - CentOS / RHEL (${{ matrix.platform }})
     runs-on: ubuntu-latest
     steps:
       - name: Check out code
         uses: actions/checkout@v2
-      - name: Set up docker image
-        run: docker build -t volta .
-        working-directory: ./ci/docker
+      - name: Set up QEMU for docker build
+        if: matrix.platform == 'aarch64'
+        uses: docker/setup-qemu-action@v1
+        with:
+          platforms: linux/arm64
+      - name: Set up QEMU for docker run
+        if: matrix.platform == 'aarch64'
+        run: sudo apt-get install qemu binfmt-support qemu-user-static
+      - name: Set up docker image for x86_64
+        if: matrix.platform == 'x86_64'
+        run: docker build -t volta ci/docker/rust
+      - name: Set up docker image for aarch64
+        if: matrix.platform == 'aarch64'
+        run: docker build --platform=linux/arm64 -t volta ci/docker/rust
       - name: Compile and package Volta
         run: docker run --volume ${PWD}:/root/workspace --workdir /root/workspace --rm --init --tty volta /root/workspace/ci/build-and-package.sh volta-centos
       - name: Confirm correct OpenSSL Version
@@ -28,15 +44,27 @@ jobs:
         uses: actions/upload-artifact@v2
         with:
           name: linux-centos
-          path: target/release/volta-centos.tar.gz
+          path: target/release/volta-centos-${{ matrix.platform }}.tar.gz
 
   linux:
     strategy:
       matrix:
+        platform:
+          - x86_64
+          - aarch64
         openssl:
           - 1_1_0
           - 1_0_1
-    name: Build - OpenSSL ${{ matrix.openssl }}
+        include:
+          - platform: x86_64
+            docker_build_platform: linux/amd64
+            target: x86_64-unknown-linux-gnu
+            package_artifact_suffix: ''
+          - platform: aarch64
+            docker_build_platform: linux/arm64/v8
+            build_target: x86_64-unknown-linux-gnu
+            package_artifact_suffix: -aarch64
+    name: Build - OpenSSL ${{ matrix.openssl }} (${{ matrix.platform }})
     runs-on: ubuntu-latest
     steps:
       - name: Check out code
@@ -47,11 +75,17 @@ jobs:
           repository: openssl/openssl
           ref: OpenSSL_${{ matrix.openssl }}-stable
           path: openssl
+      - name: Set up QEMU for docker run (aarch64 only)
+        if: matrix.platform == 'aarch64'
+        run: sudo apt-get install -y qemu binfmt-support qemu-user-static
       - name: Set up docker image
-        run: docker build -t volta .
-        working-directory: ./ci/docker
-      - name: Compile and package OpenSSL & Volta
-        run: docker run --volume ${PWD}:/root/workspace --workdir /root/workspace --rm --init --tty volta /root/workspace/ci/build-with-openssl.sh volta-openssl-${{ matrix.openssl }}
+        run: docker build '--platform=${{ matrix.docker_build_platform }}' -t volta-openssl ci/docker/openssl
+      - name: Build OpenSSL
+        run: docker run --volume ${PWD}:/root/workspace --workdir /root/workspace --rm --init --tty -e OPENSSL_DIR=/root/workspace/openssl-dist volta-openssl /root/workspace/ci/build-openssl.sh
+      - name: Set up docker image
+        run: docker build '--platform=linux/amd64' -t volta-rust ci/docker/rust
+      - name: Compile and package Volta
+        run: docker run --volume ${PWD}:/root/workspace --workdir /root/workspace --rm --init --tty -e OPENSSL_DIR=/root/workspace/openssl-dist -e 'TARGET=${{ matrix.build_target }}' volta-rust /root/workspace/ci/build-and-package.sh volta-openssl-${{ matrix.openssl }}
       - name: Confirm OpenSSL Version
         run: |
           objdump -p target/release/volta
@@ -60,7 +94,7 @@ jobs:
         uses: actions/upload-artifact@v2
         with:
           name: linux-openssl-${{ matrix.openssl }}
-          path: target/release/volta-openssl-${{ matrix.openssl }}.tar.gz
+          path: target/release/volta-openssl-${{ matrix.openssl }}-${{ matrix.platform }}.tar.gz
 
   macos:
     name: Build - MacOS
