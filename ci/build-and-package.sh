@@ -4,8 +4,11 @@ set -e
 
 echo "Building Volta"
 
-cargo build --release
-
+if [ -e TARGET ]; then
+    cargo build --release "--target=$TARGET"
+else
+    cargo build --release
+fi
 echo "Packaging Binaries"
 
 cd target/release
